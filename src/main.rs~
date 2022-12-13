@@ -1,0 +1,25 @@
+use sea_tf::t;
+use std::io::Write;
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let mut state: t::State<'_,Box<dyn FnMut(Option<usize>)>> = t::State::new();
+    state.write_all(b"Hello World!\n");
+    let mut window = t::Window::new(&state)?;
+
+    let mut letter = [b'A'];
+    loop {
+	match window.conn.wait_for_event()? {
+	    xcb::Event::X(xcb::x::Event::FocusOut(_ev)) => {
+		window.conn.send_request(&xcb::x::FreeGc {gc: window.gc});
+		break;
+	    },
+	    _ => {
+		state.do_and_redraw(|st| {st.write(&letter);},&mut window);
+		window.conn.flush()?;
+		letter[0] += 1;
+	    },
+	}
+	
+    }
+    Ok(())
+}

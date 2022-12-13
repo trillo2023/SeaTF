@@ -1,0 +1,117 @@
+pub mod state;
+pub mod write;
+pub mod window;
+//pub mod tty;
+
+use std::io;
+use std::collections::HashSet;
+use state::{QueueView,Reader,Config};
+use write::*;
+pub use window::Window;
+// use tty::*;
+
+pub struct State<'b, T>
+where
+    T: FnMut(Option<usize>)
+{
+    lines: QueueView<Vec<u8>>,
+    leftover: EscSeq,
+    pub col: usize,
+    draw: Option<&'b mut T>,
+    config: Config,
+    redraw_lines: Option<HashSet<usize>>,
+}
+impl<T: FnMut(Option<usize>)> State<'_,T> {
+    pub fn new() -> State<'static, T>
+    {
+	State {
+	    lines: QueueView::<Vec<u8>>::new(),
+	    leftover: EscSeq {
+		esc: Esc::None,
+		seq: Vec::new(),
+		inv: false,
+	    },
+	    col: 0,
+	    draw: None,
+	    config: Config::new(),
+	    redraw_lines: Some(HashSet::new()),
+	}
+    }
+    pub fn do_and_redraw<F>(&mut self, f: F, window: &mut Window)
+    where
+	F: FnOnce(&mut State<T>)
+    {
+	f(self);
+	window.redraw(self);
+	self.redraw_lines = Some(HashSet::new());
+    }
+}
+impl<T: FnMut(Option<usize>)> io::Write for State<'_, T> {
+    fn flush(&mut self) -> io::Result<()> {
+	if self.leftover.esc == Esc::None && self.leftover.seq.is_empty() {
+	    Ok(())
+	} else {
+	    Err(io::Error::new(io::ErrorKind::Other,"Incomplete control sequence cannot be flushed!"))
+	}
+    }
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+	let mut esc_seq = self.leftover.clone();
+	let l = self.pre_write(buf, &mut esc_seq);
+	esc_seq.inv = self.leftover.inv;
+	self.leftover = esc_seq;
+	Ok(l)
+    }
+}
+impl<T: FnMut(Option<usize>)> State<'_, T> {
+    fn draw(&mut self, line: Option<usize>) {
+	if let Some(draw) = &mut self.draw {
+	    draw(line)
+	} else if self.redraw_lines.is_some() {
+	    if let Some(n) = line {
+		if let Some(set) = &mut self.redraw_lines {
+		    set.insert(n);
+		}
+	    } else {
+		self.redraw_lines = None;
+	    }
+	};
+    }
+}
+
+#[cfg(test)]
+mod state_test {
+    pub use super::*;
+    pub use std::io::Write;
+    
+    pub fn draw_test<F: FnOnce(&mut State<Box<dyn FnMut(Option<usize>)+'_>>)>(f: F) -> String
+    {
+	let mut draw_cmds = String::new();
+	let mut draw = Box::new(|b| draw_cmds += &format!("<{:?}>",b)[..]) as Box<dyn FnMut(Option<usize>) + '_>;
+	let mut state = State {
+	    lines: QueueView::<Vec<u8>>::new(),
+	    leftover: EscSeq {
+		esc: Esc::None,
+		seq: Vec::new(),
+		inv: false,
+	    },
+	    col: 0,
+	    draw: Some(&mut draw),
+	    config: Config::new(),
+	    redraw_lines: None,
+	};
+	f(&mut state);
+	state.draw = None;
+	drop(draw);
+	draw_cmds
+    }
+
+    // use crate::state::state_test::*;
+    #[test]
+    fn example_draw_test() {
+	let draw_text = draw_test(|state| {
+	    state.write("a".as_bytes());
+	    assert_eq!(String::from_utf8(state.lines[0].clone()).ok().unwrap_or(String::from("invalid utf8")),"a");
+	});
+	assert_eq!(draw_text, "<Some(0)>");
+    }
+}
