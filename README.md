@@ -3,9 +3,9 @@ base for a start menu for linux + X that runs CLI Programs for e.g. a run-prompt
 The main program is basically a drop-down(/-up) terminal emulator.
 It is written in rust using xcb with xkb to display the window.
 To run it you need to enable feature "t":
-´´´sh
+```sh
 cargo run --features t
-´´´
+```
 
 ## Features(planned/mostly functional)
 * basic terminal emulator
